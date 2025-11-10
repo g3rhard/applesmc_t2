@@ -20,7 +20,7 @@
 
 #include <linux/delay.h>
 #include <linux/acpi.h>
-#include <linux/input-polldev.h>
+#include <linux/input.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -162,7 +162,7 @@ struct applesmc_device {
 	u8 backlight_state[2];
 
 	struct device *hwmon_dev;
-	struct input_polled_dev *idev;
+	struct input_dev *idev;
 
 	/*
 	 * Last index written to key_at_index sysfs file, and value to use for all other
@@ -918,7 +918,7 @@ out_mem:
 	return ret;
 }
 
-static int applesmc_remove(struct acpi_device *dev)
+static void applesmc_remove(struct acpi_device *dev)
 {
 	struct applesmc_device *smc = dev_get_drvdata(&dev->dev);
 	applesmc_destroy_modules(smc);
@@ -926,7 +926,6 @@ static int applesmc_remove(struct acpi_device *dev)
 	applesmc_free_resources(smc);
 	mutex_destroy(&smc->reg.mutex);
 	kfree(smc);
-	return 0;
 }
 
 static acpi_status applesmc_walk_resources(struct acpi_resource *res,
@@ -1078,6 +1077,7 @@ static struct acpi_driver applesmc_driver = {
  * applesmc_calibrate - Set our "resting" values.  Callers must
  * hold applesmc_lock.
  */
+#if 0
 static void applesmc_calibrate(struct applesmc_device *smc)
 {
 	applesmc_read_s16(smc, MOTION_SENSOR_X_KEY, &smc->rest_x);
@@ -1085,7 +1085,7 @@ static void applesmc_calibrate(struct applesmc_device *smc)
 	smc->rest_x = -smc->rest_x;
 }
 
-static void applesmc_idev_poll(struct input_polled_dev *dev)
+static void applesmc_idev_poll(struct input_dev *dev)
 {
 	struct applesmc_device *smc = dev->private;
 	struct input_dev *idev = dev->input;
@@ -1101,6 +1101,7 @@ static void applesmc_idev_poll(struct input_polled_dev *dev)
 	input_report_abs(idev, ABS_Y, y - smc->rest_y);
 	input_sync(idev);
 }
+#endif
 
 /* Sysfs Files */
 
@@ -1110,6 +1111,7 @@ static ssize_t applesmc_name_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "applesmc\n");
 }
 
+#if 0
 static ssize_t applesmc_position_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -1133,6 +1135,7 @@ out:
 	else
 		return snprintf(buf, PAGE_SIZE, "(%d,%d,%d)\n", x, y, z);
 }
+#endif
 
 static ssize_t applesmc_light_show(struct device *dev,
 				struct device_attribute *attr, char *sysfsbuf)
@@ -1368,6 +1371,7 @@ static ssize_t applesmc_show_fan_position(struct device *dev,
 		return snprintf(sysfsbuf, PAGE_SIZE, "%s\n", buffer+4);
 }
 
+#if 0
 static ssize_t applesmc_calibrate_show(struct device *dev,
 				struct device_attribute *attr, char *sysfsbuf)
 {
@@ -1383,6 +1387,7 @@ static ssize_t applesmc_calibrate_store(struct device *dev,
 
 	return count;
 }
+#endif
 
 static void applesmc_backlight_set(struct work_struct *work)
 {
@@ -1509,11 +1514,13 @@ static struct applesmc_node_group info_group[] = {
 	{ }
 };
 
+#if 0
 static struct applesmc_node_group accelerometer_group[] = {
 	{ "position", applesmc_position_show },
 	{ "calibrate", applesmc_calibrate_show, applesmc_calibrate_store },
 	{ }
 };
+#endif
 
 static struct applesmc_node_group light_sensor_group[] = {
 	{ "light", applesmc_light_show },
