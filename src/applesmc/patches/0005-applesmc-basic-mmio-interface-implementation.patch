@@ -21,9 +21,9 @@ index c623dc37bf07..516eb22e866f 100644
 --- a/drivers/hwmon/applesmc.c
 +++ b/drivers/hwmon/applesmc.c
 @@ -41,6 +41,18 @@
- 
+
  #define APPLESMC_NR_PORTS	32 /* 0x300-0x31f */
- 
+
 +#define APPLESMC_IOMEM_KEY_DATA		0
 +#define APPLESMC_IOMEM_KEY_STATUS	0x4005
 +#define APPLESMC_IOMEM_KEY_NAME		0x78
@@ -37,27 +37,27 @@ index c623dc37bf07..516eb22e866f 100644
 +#define APPLESMC_IOMEM_KEY_TYPE_FLAGS		6
 +
  #define APPLESMC_MAX_DATA_LENGTH 32
- 
+
  /* wait up to 128 ms for a status change. */
 @@ -134,10 +146,13 @@ struct applesmc_registers {
- 
+
  struct applesmc_device {
  	struct acpi_device *dev;
 +	struct device *ldev;
  	struct applesmc_registers reg;
- 
+
 -	bool port_base_set;
 +	bool port_base_set, iomem_base_set;
  	u16 port_base;
 +	u8 *__iomem iomem_base;
 +	u32 iomem_base_addr, iomem_base_size;
- 
+
  	s16 rest_x;
  	s16 rest_y;
 @@ -305,16 +320,141 @@ static int port_get_smc_key_info(struct applesmc_device *smc,
  	return 0;
  }
- 
+
 +
 +/*
 + * MMIO based communication.
@@ -185,7 +185,7 @@ index c623dc37bf07..516eb22e866f 100644
 +		return port_read_smc(smc, APPLESMC_READ_CMD, key, buffer, len);
 +	}
  }
- 
+
  static int write_smc(struct applesmc_device *smc, const char *key,
  	const u8 *buffer, u8 len)
  {
@@ -196,7 +196,7 @@ index c623dc37bf07..516eb22e866f 100644
 +		return port_write_smc(smc, APPLESMC_WRITE_CMD, key, buffer, len);
 +	}
  }
- 
+
  static int get_smc_key_by_index(struct applesmc_device *smc,
 @@ -322,14 +462,23 @@ static int get_smc_key_by_index(struct applesmc_device *smc,
  {
@@ -212,7 +212,7 @@ index c623dc37bf07..516eb22e866f 100644
 +							 (const char *) &be, (u8 *) key, 4);
 +	}
  }
- 
+
  static int get_smc_key_info(struct applesmc_device *smc, const char *key,
  	struct applesmc_entry *info)
  {
@@ -223,7 +223,7 @@ index c623dc37bf07..516eb22e866f 100644
 +		return port_get_smc_key_info(smc, key, info);
 +	}
  }
- 
+
  static int read_register_count(struct applesmc_device *smc,
 @@ -703,6 +852,7 @@ static int applesmc_add(struct acpi_device *dev)
  	if (!smc)
@@ -231,12 +231,12 @@ index c623dc37bf07..516eb22e866f 100644
  	smc->dev = dev;
 +	smc->ldev = &dev->dev;
  	mutex_init(&smc->reg.mutex);
- 
+
  	dev_set_drvdata(&dev->dev, smc);
 @@ -760,6 +910,20 @@ static acpi_status applesmc_walk_resources(struct acpi_resource *res,
  			}
  			return AE_OK;
- 
+
 +		case ACPI_RESOURCE_TYPE_FIXED_MEMORY32:
 +			if (!smc->iomem_base_set) {
 +				if (res->data.fixed_memory32.address_length <
@@ -257,7 +257,7 @@ index c623dc37bf07..516eb22e866f 100644
 @@ -771,6 +935,8 @@ static acpi_status applesmc_walk_resources(struct acpi_resource *res,
  	}
  }
- 
+
 +static int applesmc_try_enable_iomem(struct applesmc_device *smc);
 +
  static int applesmc_init_resources(struct applesmc_device *smc)
@@ -266,7 +266,7 @@ index c623dc37bf07..516eb22e866f 100644
 @@ -783,11 +949,54 @@ static int applesmc_init_resources(struct applesmc_device *smc)
  	if (!request_region(smc->port_base, APPLESMC_NR_PORTS, "applesmc"))
  		return -ENXIO;
- 
+
 +	if (smc->iomem_base_set) {
 +		if (applesmc_try_enable_iomem(smc))
 +			smc->iomem_base_set = false;
@@ -310,14 +310,13 @@ index c623dc37bf07..516eb22e866f 100644
 +out:
 +	return -ENXIO;
  }
- 
+
  static void applesmc_free_resources(struct applesmc_device *smc)
  {
 +	if (smc->iomem_base_set)
 +		iounmap(smc->iomem_base);
  	release_region(smc->port_base, APPLESMC_NR_PORTS);
  }
- 
--- 
-2.23.0
 
+--
+2.23.0

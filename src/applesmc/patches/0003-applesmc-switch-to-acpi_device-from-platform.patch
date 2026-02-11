@@ -24,7 +24,7 @@ index be4d1d8e50ed..406b12023d58 100644
 +++ b/drivers/hwmon/applesmc.c
 @@ -19,7 +19,7 @@
  #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
- 
+
  #include <linux/delay.h>
 -#include <linux/platform_device.h>
 +#include <linux/acpi.h>
@@ -34,26 +34,26 @@ index be4d1d8e50ed..406b12023d58 100644
 @@ -34,7 +34,6 @@
  #include <linux/workqueue.h>
  #include <linux/err.h>
- 
+
 -#define APPLESMC_PORT_BASE	0x300
  /* data port used by Apple SMC */
  #define APPLESMC_DATA_PORT	0
  /* command/status port used by Apple SMC */
 @@ -134,9 +133,10 @@ struct applesmc_registers {
  };
- 
+
  struct applesmc_device {
 -	struct platform_device *dev;
 +	struct acpi_device *dev;
  	struct applesmc_registers reg;
- 
+
 +	bool port_base_set;
  	u16 port_base;
- 
+
  	s16 rest_x;
 @@ -651,9 +651,13 @@ static int applesmc_init_smcreg(struct applesmc_device *smc)
  }
- 
+
  /* Device model stuff */
 +
 +static int applesmc_init_resources(struct applesmc_device *smc);
@@ -69,24 +69,24 @@ index be4d1d8e50ed..406b12023d58 100644
 @@ -664,12 +668,16 @@ static int applesmc_probe(struct platform_device *dev)
  	smc->dev = dev;
  	mutex_init(&smc->reg.mutex);
- 
+
 -	platform_set_drvdata(dev, smc);
 +	dev_set_drvdata(&dev->dev, smc);
- 
+
 -	ret = applesmc_init_smcreg(smc);
 +	ret = applesmc_init_resources(smc);
  	if (ret)
  		goto out_mem;
- 
+
 +	ret = applesmc_init_smcreg(smc);
 +	if (ret)
 +		goto out_res;
 +
  	applesmc_device_init(smc);
- 
+
  	ret = applesmc_create_modules(smc);
 @@ -680,24 +688,72 @@ static int applesmc_probe(struct platform_device *dev)
- 
+
  out_reg:
  	applesmc_destroy_smcreg(smc);
 +out_res:
@@ -96,10 +96,10 @@ index be4d1d8e50ed..406b12023d58 100644
 +	dev_set_drvdata(&dev->dev, NULL);
  	mutex_destroy(&smc->reg.mutex);
  	kfree(smc);
- 
+
  	return ret;
  }
- 
+
 -static int applesmc_remove(struct platform_device *dev)
 +static int applesmc_remove(struct acpi_device *dev)
  {
@@ -112,7 +112,7 @@ index be4d1d8e50ed..406b12023d58 100644
  	kfree(smc);
  	return 0;
  }
- 
+
 +static acpi_status applesmc_walk_resources(struct acpi_resource *res,
 +	void *data)
 +{
@@ -164,7 +164,7 @@ index be4d1d8e50ed..406b12023d58 100644
 @@ -715,18 +771,28 @@ static int applesmc_pm_restore(struct device *dev)
  	return applesmc_pm_resume(dev);
  }
- 
+
 +static const struct acpi_device_id applesmc_ids[] = {
 +	{"APP0001", 0},
 +	{"", 0},
@@ -174,7 +174,7 @@ index be4d1d8e50ed..406b12023d58 100644
  	.resume = applesmc_pm_resume,
  	.restore = applesmc_pm_restore,
  };
- 
+
 -static struct platform_driver applesmc_driver = {
 -	.probe = applesmc_probe,
 -	.remove = applesmc_remove,
@@ -194,7 +194,7 @@ index be4d1d8e50ed..406b12023d58 100644
  	},
 +	.owner = THIS_MODULE
  };
- 
+
  /*
 @@ -1211,7 +1277,6 @@ static int applesmc_create_accelerometer(struct applesmc_device *smc)
  {
@@ -203,11 +203,11 @@ index be4d1d8e50ed..406b12023d58 100644
 -
  	if (!smc->reg.has_accelerometer)
  		return 0;
- 
+
 @@ -1411,8 +1476,6 @@ static void applesmc_destroy_modules(struct applesmc_device *smc)
  }
- 
- 
+
+
 -static struct platform_device *pdev;
 -
  static int __init applesmc_init(void)
@@ -216,7 +216,7 @@ index be4d1d8e50ed..406b12023d58 100644
 @@ -1423,29 +1486,12 @@ static int __init applesmc_init(void)
  		goto out;
  	}
- 
+
 -	if (!request_region(APPLESMC_PORT_BASE, APPLESMC_NR_PORTS,
 -								"applesmc")) {
 -		ret = -ENXIO;
@@ -235,9 +235,9 @@ index be4d1d8e50ed..406b12023d58 100644
 -		goto out_driver;
 -	}
 +		goto out;
- 
+
  	return 0;
- 
+
 -out_driver:
 -	platform_driver_unregister(&applesmc_driver);
 -out_region:
@@ -246,7 +246,7 @@ index be4d1d8e50ed..406b12023d58 100644
  	pr_warn("driver init failed (ret=%d)!\n", ret);
  	return ret;
 @@ -1453,9 +1499,7 @@ static int __init applesmc_init(void)
- 
+
  static void __exit applesmc_exit(void)
  {
 -	platform_device_unregister(pdev);
@@ -254,8 +254,7 @@ index be4d1d8e50ed..406b12023d58 100644
 -	release_region(APPLESMC_PORT_BASE, APPLESMC_NR_PORTS);
 +	acpi_bus_unregister_driver(&applesmc_driver);
  }
- 
- module_init(applesmc_init);
--- 
-2.23.0
 
+ module_init(applesmc_init);
+--
+2.23.0

@@ -20,7 +20,7 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 @@ -34,10 +34,11 @@
  #include <linux/workqueue.h>
  #include <linux/err.h>
- 
+
 +#define APPLESMC_PORT_BASE	0x300
  /* data port used by Apple SMC */
 -#define APPLESMC_DATA_PORT	0x300
@@ -28,18 +28,18 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
  /* command/status port used by Apple SMC */
 -#define APPLESMC_CMD_PORT	0x304
 +#define APPLESMC_CMD_PORT	4
- 
+
  #define APPLESMC_NR_PORTS	32 /* 0x300-0x31f */
- 
+
 @@ -136,6 +137,8 @@ struct applesmc_device {
  	struct platform_device *dev;
  	struct applesmc_registers reg;
- 
+
 +	u16 port_base;
 +
  	s16 rest_x;
  	s16 rest_y;
- 
+
 @@ -161,13 +164,13 @@ static const int debug;
   * wait_read - Wait for a byte to appear on SMC port. Callers must
   * hold applesmc_lock.
@@ -65,7 +65,7 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
  {
  	u8 status;
  	int us;
- 
+
 -	outb(cmd, port);
 +	outb(cmd, smc->port_base + port);
  	for (us = APPLESMC_MIN_WAIT; us < APPLESMC_MAX_WAIT; us <<= 1) {
@@ -82,50 +82,50 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 -		outb(cmd, port);
 +		outb(cmd, smc->port_base + port);
  	}
- 
+
  	pr_warn("send_byte(0x%02x, 0x%04x) fail: 0x%02x\n", cmd, port, status);
  	return -EIO;
  }
- 
+
 -static int send_command(u8 cmd)
 +static int send_command(struct applesmc_device *smc, u8 cmd)
  {
 -	return send_byte(cmd, APPLESMC_CMD_PORT);
 +	return send_byte(smc, cmd, APPLESMC_CMD_PORT);
  }
- 
+
 -static int send_argument(const char *key)
 +static int send_argument(struct applesmc_device *smc, const char *key)
  {
  	int i;
- 
+
  	for (i = 0; i < 4; i++)
 -		if (send_byte(key[i], APPLESMC_DATA_PORT))
 +		if (send_byte(smc, key[i], APPLESMC_DATA_PORT))
  			return -EIO;
  	return 0;
  }
- 
+
 -static int read_smc(u8 cmd, const char *key, u8 *buffer, u8 len)
 +static int read_smc(struct applesmc_device *smc, u8 cmd, const char *key,
 +	u8 *buffer, u8 len)
  {
  	u8 status, data = 0;
  	int i;
- 
+
 -	if (send_command(cmd) || send_argument(key)) {
 +	if (send_command(smc, cmd) || send_argument(smc, key)) {
  		pr_warn("%.4s: read arg fail\n", key);
  		return -EIO;
  	}
- 
+
  	/* This has no effect on newer (2012) SMCs */
 -	if (send_byte(len, APPLESMC_DATA_PORT)) {
 +	if (send_byte(smc, len, APPLESMC_DATA_PORT)) {
  		pr_warn("%.4s: read len fail\n", key);
  		return -EIO;
  	}
- 
+
  	for (i = 0; i < len; i++) {
 -		if (wait_read()) {
 +		if (wait_read(smc)) {
@@ -135,7 +135,7 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 -		buffer[i] = inb(APPLESMC_DATA_PORT);
 +		buffer[i] = inb(smc->port_base + APPLESMC_DATA_PORT);
  	}
- 
+
  	/* Read the data port until bit0 is cleared */
  	for (i = 0; i < 16; i++) {
  		udelay(APPLESMC_MIN_WAIT);
@@ -151,25 +151,25 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 @@ -261,22 +265,23 @@ static int read_smc(u8 cmd, const char *key, u8 *buffer, u8 len)
  	return 0;
  }
- 
+
 -static int write_smc(u8 cmd, const char *key, const u8 *buffer, u8 len)
 +static int write_smc(struct applesmc_device *smc, u8 cmd, const char *key,
 +	const u8 *buffer, u8 len)
  {
  	int i;
- 
+
 -	if (send_command(cmd) || send_argument(key)) {
 +	if (send_command(smc, cmd) || send_argument(smc, key)) {
  		pr_warn("%s: write arg fail\n", key);
  		return -EIO;
  	}
- 
+
 -	if (send_byte(len, APPLESMC_DATA_PORT)) {
 +	if (send_byte(smc, len, APPLESMC_DATA_PORT)) {
  		pr_warn("%.4s: write len fail\n", key);
  		return -EIO;
  	}
- 
+
  	for (i = 0; i < len; i++) {
 -		if (send_byte(buffer[i], APPLESMC_DATA_PORT)) {
 +		if (send_byte(smc, buffer[i], APPLESMC_DATA_PORT)) {
@@ -179,19 +179,19 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 @@ -285,12 +290,13 @@ static int write_smc(u8 cmd, const char *key, const u8 *buffer, u8 len)
  	return 0;
  }
- 
+
 -static int read_register_count(unsigned int *count)
 +static int read_register_count(struct applesmc_device *smc,
 +	unsigned int *count)
  {
  	__be32 be;
  	int ret;
- 
+
 -	ret = read_smc(APPLESMC_READ_CMD, KEY_COUNT_KEY, (u8 *)&be, 4);
 +	ret = read_smc(smc, APPLESMC_READ_CMD, KEY_COUNT_KEY, (u8 *)&be, 4);
  	if (ret)
  		return ret;
- 
+
 @@ -313,7 +319,7 @@ static int applesmc_read_entry(struct applesmc_device *smc,
  	if (entry->len != len)
  		return -EINVAL;
@@ -199,7 +199,7 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 -	ret = read_smc(APPLESMC_READ_CMD, entry->key, buf, len);
 +	ret = read_smc(smc, APPLESMC_READ_CMD, entry->key, buf, len);
  	mutex_unlock(&smc->reg.mutex);
- 
+
  	return ret;
 @@ -327,7 +333,7 @@ static int applesmc_write_entry(struct applesmc_device *smc,
  	if (entry->len != len)
@@ -222,20 +222,20 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 +	ret = read_smc(smc, APPLESMC_GET_KEY_TYPE_CMD, key, info, 6);
  	if (ret)
  		goto out;
- 
+
 @@ -549,7 +555,7 @@ static int applesmc_init_smcreg_try(struct applesmc_device *smc)
  	if (s->init_complete)
  		return 0;
- 
+
 -	ret = read_register_count(&count);
 +	ret = read_register_count(smc, &count);
  	if (ret)
  		return ret;
- 
+
 @@ -1417,7 +1423,7 @@ static int __init applesmc_init(void)
  		goto out;
  	}
- 
+
 -	if (!request_region(APPLESMC_DATA_PORT, APPLESMC_NR_PORTS,
 +	if (!request_region(APPLESMC_PORT_BASE, APPLESMC_NR_PORTS,
  								"applesmc")) {
@@ -257,8 +257,7 @@ index 7f8e56b9afd7..be4d1d8e50ed 100644
 -	release_region(APPLESMC_DATA_PORT, APPLESMC_NR_PORTS);
 +	release_region(APPLESMC_PORT_BASE, APPLESMC_NR_PORTS);
  }
- 
- module_init(applesmc_init);
--- 
-2.23.0
 
+ module_init(applesmc_init);
+--
+2.23.0
