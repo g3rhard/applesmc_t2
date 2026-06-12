@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG DEBIAN_VERSION=trixie
+ARG DEBIAN_VERSION=trixie-20240423@sha256:e6418c43dcf99ece714f95e17066c4bc0ad95491b0efe18afed74b4f14674290
 
 FROM public.ecr.aws/debian/debian:${DEBIAN_VERSION} AS builder
 
